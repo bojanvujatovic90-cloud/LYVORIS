@@ -1,39 +1,27 @@
 import paypal from '@paypal/checkout-server-sdk';
 
-const MAX_COMMISSION_RATE = 0.05; // 5% provizije za platformu
-
-function environment() {
-  let clientId = process.env.PAYPAL_CLIENT_ID;
-  let clientSecret = process.env.PAYPAL_SECRET_KEY;
-
-  return new paypal.core.LiveEnvironment(clientId, clientSecret);
-}
-
-function client() {
-  return new paypal.core.PayPalHttpClient(environment());
-}
+const MAX_COMMISSION_RATE = 0.05; // Hard-capped at 5%
+const P2P_COMMISSION_RATE = 0.01; // 1% for P2P transfers
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'Method not allowed' });
-  }
-
-  const { amount, sellerPaypalEmail, isP2P } = req.body;
-  const rate = isP2P ? 0.01 : MAX_COMMISSION_RATE;
-  
-  const totalAmount = parseFloat(amount);
-  const fee = (totalAmount * rate).toFixed(2);
-  const sellerPayout = (totalAmount - fee).toFixed(2);
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    // Ovde se kreira transakcija i priprema Payout za prodavca
-    res.status(200).json({
+    const { amount, sellerPaypalEmail, isP2P } = req.body;
+    const total = parseFloat(amount);
+    const rate = isP2P ? P2P_COMMISSION_RATE : MAX_COMMISSION_RATE;
+    const fee = (total * rate).toFixed(2);
+    const netPayout = (total - fee).toFixed(2);
+
+    return res.status(200).json({
       success: true,
+      amount: total.toFixed(2),
       fee: fee,
-      sellerPayout: sellerPayout,
-      message: "Transakcija pripremljena za obradu"
+      sellerPayout: netPayout,
+      currency: 'USD',
+      status: 'AUTONOMOUS_ROUTING_AUTHORIZED'
     });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 }

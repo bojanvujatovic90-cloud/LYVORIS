@@ -1,23 +1,23 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase Client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Pomoćna funkcija za bezbedno preuzimanje Supabase klijenta
+const getSupabase = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key);
+};
 
 export default function Home() {
-  // Global State
   const [agreed, setAgreed] = useState(false);
-  const [activeTab, setActiveTab] = useState('market'); // 'market', 'exchange', 'pay'
+  const [activeTab, setActiveTab] = useState('market');
   const [status, setStatus] = useState(null);
 
-  // Exchange / Stock Market Trading State
   const [ticker, setTicker] = useState('VWCE');
   const [tradeShares, setTradeShares] = useState(1);
-  const [tradeType, setTradeType] = useState('BUY'); // 'BUY' or 'SELL'
+  const [tradeType, setTradeType] = useState('BUY');
   
-  // Marketplace & P2P State
   const [listings, setListings] = useState([]);
   const [newTitle, setNewTitle] = useState('');
   const [newPrice, setNewPrice] = useState('');
@@ -26,29 +26,34 @@ export default function Home() {
   const [payAmount, setPayAmount] = useState('');
   const [payRecipient, setPayRecipient] = useState('');
 
-  // Fetch Listings on load
   useEffect(() => { fetchListings(); }, []);
 
   async function fetchListings() {
-    if (!supabaseUrl) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
     const { data, error } = await supabase.from('listings').select('*').order('created_at', { ascending: false });
     if (!error && data) setListings(data);
   }
 
-  // Publish Item to Market
   async function handleCreateListing(e) {
     e.preventDefault();
     if (!agreed) return alert("Acknowledge liability terms first.");
+    
+    const supabase = getSupabase();
+    if (!supabase) return alert("Supabase credentials missing in environment variables.");
+
     const { error } = await supabase.from('listings').insert([
       { title: newTitle, price: parseFloat(newPrice), seller_email: newSellerEmail }
     ]);
+    
     if (!error) {
       setNewTitle(''); setNewPrice(''); setNewSellerEmail(''); fetchListings();
       alert("Asset listed on the public market.");
+    } else {
+      alert("Error: " + error.message);
     }
   }
 
-  // Execute Routing (Buy Item or Direct Pay)
   const handleTransaction = async (amount, recipientEmail, isP2P) => {
     if (!agreed) return alert("Acknowledge liability terms first.");
     setStatus('Processing autonomous routing...');
@@ -69,17 +74,14 @@ export default function Home() {
     }
   };
 
-  // Execute Exchange Order (Simulated Stock/ETF Trade)
   const handleExchangeTrade = (e) => {
     e.preventDefault();
     if (!agreed) return alert("Acknowledge liability terms first.");
-    
-    // U budućnosti se ovde povezuje pravi Broker API (Interactive Brokers, Alpaca)
     setStatus(`Processing Limit ${tradeType} Order for ${tradeShares} shares of ${ticker}...`);
     setTimeout(() => {
       setStatus(`Order Executed! Successfully routed ${tradeType} order for ${ticker} via platform bridge.`);
     }, 1500);
-  }
+  };
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#090d16', color: '#f8fafc', fontFamily: 'sans-serif', padding: '20px' }}>
@@ -95,14 +97,12 @@ export default function Home() {
         <h1 style={{ fontSize: '44px', fontWeight: '900', color: '#38bdf8' }}>Global Market & Exchange Infrastructure</h1>
         <p style={{ color: '#94a3b8', fontSize: '18px', marginBottom: '30px' }}>Trade physical assets, digital goods, or route multi-asset exchange orders autonomously.</p>
 
-        {/* Global Navigation */}
         <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '30px', flexWrap: 'wrap' }}>
           <button onClick={() => setActiveTab('market')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'market' ? '#2563eb' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Asset Marketplace</button>
           <button onClick={() => setActiveTab('exchange')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'exchange' ? '#10b981' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Equities & ETF Exchange</button>
           <button onClick={() => setActiveTab('pay')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'pay' ? '#8b5cf6' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Direct P2P Bridge</button>
         </div>
 
-        {/* Liability Waiver */}
         <div style={{ background: '#0f172a', padding: '15px', borderRadius: '10px', maxWidth: '700px', margin: '0 auto 30px auto', border: '1px solid #1e293b' }}>
           <label style={{ display: 'flex', gap: '10px', fontSize: '12px', color: '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
@@ -110,7 +110,6 @@ export default function Home() {
           </label>
         </div>
 
-        {/* --- MODULE 1: ASSET MARKETPLACE --- */}
         {activeTab === 'market' && (
           <div>
             <div style={{ background: '#0f172a', padding: '24px', borderRadius: '12px', maxWidth: '500px', margin: '0 auto 40px auto', textAlign: 'left', border: '1px solid #334155' }}>
@@ -140,7 +139,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* --- MODULE 2: EQUITIES / ETF EXCHANGE (NEW) --- */}
         {activeTab === 'exchange' && (
           <div style={{ background: '#0f172a', border: '1px solid #059669', borderRadius: '16px', padding: '30px', maxWidth: '500px', margin: '0 auto', textAlign: 'left' }}>
             <h3 style={{ marginTop: 0, color: '#10b981' }}>Omni-Exchange Terminal</h3>
@@ -165,7 +163,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* --- MODULE 3: DIRECT P2P --- */}
         {activeTab === 'pay' && (
           <div style={{ background: '#0f172a', border: '1px solid #8b5cf6', borderRadius: '16px', padding: '30px', maxWidth: '500px', margin: '0 auto', textAlign: 'left' }}>
             <h3 style={{ marginTop: 0, color: '#a78bfa' }}>Direct P2P Bridge</h3>

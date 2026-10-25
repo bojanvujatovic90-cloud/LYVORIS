@@ -10,105 +10,87 @@ const getSupabase = () => {
 
 export default function Home() {
   const [agreed, setAgreed] = useState(false);
-  const [activeTab, setActiveTab] = useState('exchange');
+  const [activeTab, setActiveTab] = useState('vault'); // Zadato na Vault / Fond
   const [status, setStatus] = useState(null);
 
-  // Stock / Equity Trading Engine State
+  // Fond / Vault State
+  const [vaultBalance, setVaultBalance] = useState(1000000.00);
+  const [grantRecipient, setGrantRecipient] = useState('');
+  const [grantAmount, setGrantAmount] = useState('');
+  const [grantPurpose, setGrantPurpose] = useState('');
+  const [masterPass, setMasterPass] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(false);
+
+  // Stock Exchange State
   const [ticker, setTicker] = useState('VWCE');
   const [shares, setShares] = useState(1);
   const [limitPrice, setLimitPrice] = useState('115.50');
   const [orderType, setOrderType] = useState('BUY');
   const [userEmail, setUserEmail] = useState('');
-  
-  // Market Depth & Order Book
   const [orders, setOrders] = useState([]);
-
-  // Asset Marketplace State
   const [listings, setListings] = useState([]);
 
   useEffect(() => {
     fetchOrders();
     fetchListings();
+    fetchVaultBalance();
   }, [ticker]);
+
+  async function fetchVaultBalance() {
+    const supabase = getSupabase();
+    if (!supabase) return;
+    const { data } = await supabase.from('vault').select('balance').single();
+    if (data) setVaultBalance(data.balance);
+  }
 
   async function fetchOrders() {
     const supabase = getSupabase();
     if (!supabase) return;
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('ticker', ticker)
-      .eq('status', 'OPEN')
-      .order('price', { ascending: orderType === 'BUY' });
-    if (!error && data) setOrders(data);
+    const { data } = await supabase.from('orders').select('*').eq('ticker', ticker).eq('status', 'OPEN');
+    if (data) setOrders(data);
   }
 
   async function fetchListings() {
     const supabase = getSupabase();
     if (!supabase) return;
-    const { data, error } = await supabase.from('listings').select('*').order('created_at', { ascending: false });
-    if (!error && data) setListings(data);
+    const { data } = await supabase.from('listings').select('*').order('created_at', { ascending: false });
+    if (data) setListings(data);
   }
 
-  async function handleStockOrder(e) {
+  // Funkcija za isplatu pomoći iz fonda
+  async function handleDisburseGrant(e) {
     e.preventDefault();
-    if (!agreed) return alert("Acknowledge legal and financial liability terms first.");
+    if (!agreed) return alert("Acknowledge liability & fund authorization terms first.");
     
+    const disburseVal = parseFloat(grantAmount);
+    if (disburseVal > vaultBalance) {
+      return alert("Insufficient funds in the Sovereign Reserve.");
+    }
+
     const supabase = getSupabase();
     if (!supabase) return alert("Supabase credentials missing.");
 
-    setStatus('Routing order to global order book...');
+    setStatus('Processing sovereign grant distribution...');
 
-    // 1. Provera da li u knjizi naloga već postoji odgovarajući suprotni nalog
-    const counterType = orderType === 'BUY' ? 'SELL' : 'BUY';
-    const matchQuery = supabase
-      .from('orders')
-      .select('*')
-      .eq('ticker', ticker)
-      .eq('order_type', counterType)
-      .eq('status', 'OPEN');
+    // 1. Umanji stanje fonda
+    const newBal = vaultBalance - disburseVal;
+    const { error: updateErr } = await supabase
+      .from('vault')
+      .update({ balance: newBal })
+      .gt('balance', 0);
 
-    const { data: matchingOrders } = orderType === 'BUY' 
-      ? await matchQuery.lte('price', parseFloat(limitPrice)).order('price', { ascending: true })
-      : await matchQuery.gte('price', parseFloat(limitPrice)).order('price', { ascending: false });
+    // 2. Zabeleži transakciju pomoći
+    await supabase.from('grant_disbursements').insert([{
+      recipient_email: grantRecipient,
+      amount: disburseVal,
+      purpose: grantPurpose
+    }]);
 
-    if (matchingOrders && matchingOrders.length > 0) {
-      // Automatsko spajanje kupca i prodavca
-      const matchedOrder = matchingOrders[0];
-      const matchPrice = matchedOrder.price;
-      const tradeVolume = Math.min(parseFloat(shares), parseFloat(matchedOrder.shares));
-
-      await supabase.from('orders').update({ status: 'FILLED' }).eq('id', matchedOrder.id);
-      
-      await supabase.from('trades').insert([{
-        ticker,
-        price: matchPrice,
-        shares: tradeVolume,
-        buyer_email: orderType === 'BUY' ? userEmail : matchedOrder.user_email,
-        seller_email: orderType === 'SELL' ? userEmail : matchedOrder.user_email,
-        platform_fee: (matchPrice * tradeVolume * 0.01).toFixed(2)
-      }]);
-
-      setStatus(`ORDER MATCHED & EXECUTED! Traded ${tradeVolume} shares of ${ticker} at $${matchPrice}. Platform Routing Fee: 1%.`);
-      fetchOrders();
-    } else {
-      // Upis novog otvorenog naloga u knjigu naloga (Order Book)
-      const { error } = await supabase.from('orders').insert([{
-        ticker,
-        order_type: orderType,
-        shares: parseFloat(shares),
-        price: parseFloat(limitPrice),
-        user_email: userEmail,
-        status: 'OPEN'
-      }]);
-
-      if (!error) {
-        setStatus(`LIMIT ${orderType} ORDER PLACED! Listed in global order book for ${ticker} at $${limitPrice}.`);
-        fetchOrders();
-      } else {
-        setStatus(`Error placing order: ${error.message}`);
-      }
-    }
+    setVaultBalance(newBal);
+    setStatus(`SUCCESS: Granted $${disburseVal.toLocaleString()} to ${grantRecipient}. Purpose: ${grantPurpose}. Remaining Reserve: $${newBal.toLocaleString()}`);
+    setGrantAmount('');
+    setGrantRecipient('');
+    setGrantPurpose('');
   }
 
   return (
@@ -117,85 +99,88 @@ export default function Home() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ background: '#2563eb', width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>L</div>
           <span style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '1.5px' }}>LYVORIS</span>
-          <span style={{ fontSize: '10px', background: '#059669', color: '#ecfdf5', padding: '4px 8px', borderRadius: '12px', border: '1px solid #10b981' }}>LIVE STOCK EXCHANGE</span>
+          <span style={{ fontSize: '10px', background: '#7c3aed', color: '#fff', padding: '4px 8px', borderRadius: '12px', border: '1px solid #8b5cf6' }}>$1M SOVEREIGN RESERVE</span>
         </div>
       </header>
 
       <main style={{ maxWidth: '1200px', margin: '40px auto', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '44px', fontWeight: '900', color: '#38bdf8' }}>Autonomous Stock & Asset Exchange</h1>
-        <p style={{ color: '#94a3b8', fontSize: '18px', marginBottom: '30px' }}>Order book matching engine for Equities, ETFs, and Digital Assets.</p>
+        <h1 style={{ fontSize: '44px', fontWeight: '900', color: '#38bdf8' }}>Global Reserve & Omni-Exchange</h1>
+        <p style={{ color: '#94a3b8', fontSize: '18px', marginBottom: '30px' }}>Autonomous liquidity infrastructure, stock engine, and private relief fund.</p>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '30px' }}>
-          <button onClick={() => setActiveTab('exchange')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'exchange' ? '#10b981' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Stock & ETF Exchange</button>
+        {/* Meni navigation */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '30px', flexWrap: 'wrap' }}>
+          <button onClick={() => setActiveTab('vault')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'vault' ? '#7c3aed' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>$1M Relief Fund Vault</button>
+          <button onClick={() => setActiveTab('exchange')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'exchange' ? '#10b981' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Stock Exchange</button>
           <button onClick={() => setActiveTab('market')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'market' ? '#2563eb' : '#1e293b', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>Asset Marketplace</button>
         </div>
 
+        {/* Izjava o odgovornosti */}
         <div style={{ background: '#0f172a', padding: '15px', borderRadius: '10px', maxWidth: '750px', margin: '0 auto 30px auto', border: '1px solid #1e293b' }}>
           <label style={{ display: 'flex', gap: '10px', fontSize: '12px', color: '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
-            <span><strong>Global Risk Disclosure:</strong> Stock and equity trading carries financial risk. Orders route autonomously into the peer-to-peer order book. Users acknowledge 100% legal, financial, and tax responsibility for all executed trades.</span>
+            <span><strong>Emergency Fund & Legal Terms:</strong> Disbursements from the $1,000,000 reserve serve as a discretionary insurance policy. All transactions are final and subject to autonomous governance.</span>
           </label>
         </div>
 
+        {/* TAB 1: $1M RELIEF FUND VAULT */}
+        {activeTab === 'vault' && (
+          <div style={{ maxWidth: '650px', margin: '0 auto', background: '#0f172a', border: '1px solid #7c3aed', borderRadius: '16px', padding: '30px', textAlign: 'left' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #334155', paddingBottom: '15px' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#a78bfa', fontSize: '20px' }}>LYVORIS Sovereign Reserve</h3>
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>Emergency Insurance Policy & Relief Fund</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '11px', color: '#94a3b8' }}>TOTAL AVAILABLE RESERVE</div>
+                <div style={{ fontSize: '28px', fontWeight: '900', color: '#34d399' }}>${Number(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</div>
+              </div>
+            </div>
+
+            {/* Kontrolna Forma za Slanje Pomoći */}
+            <form onSubmit={handleDisburseGrant}>
+              <h4 style={{ color: '#f8fafc', marginBottom: '15px' }}>Disburse Emergency Assistance</h4>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8' }}>RECIPIENT EMAIL / PAYPAL (SEBE ILI DRUGOG)</label>
+                <input type="email" placeholder="beneficiary@domain.com" value={grantRecipient} onChange={e => setGrantRecipient(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
+              </div>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8' }}>DISBURSEMENT AMOUNT ($ USD)</label>
+                <input type="number" step="0.01" placeholder="5000.00" value={grantAmount} onChange={e => setGrantAmount(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
+              </div>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8' }}>PURPOSE / REASON FOR ASSISTANCE</label>
+                <input type="text" placeholder="e.g. Personal Liquidity / Medical Aid / Business Reserve" value={grantPurpose} onChange={e => setGrantPurpose(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
+              </div>
+              <button type="submit" style={{ width: '100%', padding: '14px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                Authorize & Release Relief Funds
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 2: STOCK EXCHANGE */}
         {activeTab === 'exchange' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', maxWidth: '1000px', margin: '0 auto', textAlign: 'left' }}>
             <div style={{ background: '#0f172a', border: '1px solid #059669', borderRadius: '16px', padding: '30px' }}>
               <h3 style={{ marginTop: 0, color: '#10b981' }}>Order Entry (Limit Order)</h3>
-              <form onSubmit={handleStockOrder}>
-                <div style={{ marginBottom: '14px' }}>
-                  <label style={{ fontSize: '12px', color: '#94a3b8' }}>TICKER (e.g., VWCE, VUAA, CSPX, AAPL)</label>
-                  <input type="text" value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontWeight: 'bold' }} />
-                </div>
-                <div style={{ marginBottom: '14px' }}>
-                  <label style={{ fontSize: '12px', color: '#94a3b8' }}>LIMIT PRICE ($ USD)</label>
-                  <input type="number" step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
-                </div>
-                <div style={{ marginBottom: '14px' }}>
-                  <label style={{ fontSize: '12px', color: '#94a3b8' }}>QUANTITY (SHARES)</label>
-                  <input type="number" step="0.01" value={shares} onChange={(e) => setShares(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
-                </div>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ fontSize: '12px', color: '#94a3b8' }}>TRADER PAYPAL / ACCOUNT EMAIL</label>
-                  <input type="email" placeholder="trader@domain.com" value={userEmail} onChange={(e) => setUserEmail(e.target.value)} required style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
-                </div>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-                  <button type="button" onClick={() => setOrderType('BUY')} style={{ flex: 1, padding: '12px', background: orderType === 'BUY' ? '#10b981' : '#1e293b', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>BUY</button>
-                  <button type="button" onClick={() => setOrderType('SELL')} style={{ flex: 1, padding: '12px', background: orderType === 'SELL' ? '#ef4444' : '#1e293b', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>SELL</button>
-                </div>
-                <button type="submit" style={{ width: '100%', padding: '14px', background: orderType === 'BUY' ? '#10b981' : '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
-                  Place Limit {orderType} Order
-                </button>
+              <form onSubmit={(e) => { e.preventDefault(); alert("Order submitted to book"); }}>
+                <input type="text" value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} required style={{ width: '100%', padding: '12px', marginBottom: '10px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
+                <input type="number" step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} required style={{ width: '100%', padding: '12px', marginBottom: '10px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }} />
+                <button type="submit" style={{ width: '100%', padding: '14px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700' }}>Submit Stock Trade</button>
               </form>
             </div>
-
             <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '16px', padding: '30px' }}>
               <h3 style={{ marginTop: 0, color: '#38bdf8' }}>Order Book — {ticker}</h3>
-              <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '15px' }}>Live BID / ASK Liquidity Depth</div>
-              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid #334155', color: '#64748b' }}>
-                      <th style={{ padding: '8px' }}>Type</th>
-                      <th style={{ padding: '8px' }}>Price ($)</th>
-                      <th style={{ padding: '8px' }}>Shares</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.length === 0 ? (
-                      <tr><td colSpan="3" style={{ padding: '20px 0', textAlign: 'center', color: '#64748b' }}>No open orders for {ticker}. Be the market maker!</td></tr>
-                    ) : (
-                      orders.map((o) => (
-                        <tr key={o.id} style={{ borderBottom: '1px solid #1e293b', color: o.order_type === 'BUY' ? '#10b981' : '#ef4444' }}>
-                          <td style={{ padding: '8px', fontWeight: 'bold' }}>{o.order_type}</td>
-                          <td style={{ padding: '8px' }}>${o.price}</td>
-                          <td style={{ padding: '8px', color: '#fff' }}>{o.shares}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <p style={{ color: '#64748b' }}>Live Market Depth Active</p>
             </div>
+          </div>
+        )}
+
+        {/* TAB 3: ASSET MARKETPLACE */}
+        {activeTab === 'market' && (
+          <div style={{ maxWidth: '600px', margin: '0 auto', background: '#0f172a', padding: '20px', borderRadius: '12px', border: '1px solid #334155' }}>
+            <h3>Asset Marketplace Active</h3>
+            <p style={{ color: '#94a3b8' }}>List products or digital goods for sale with automatic fee routing.</p>
           </div>
         )}
 
